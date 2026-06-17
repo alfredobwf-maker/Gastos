@@ -1,769 +1,1263 @@
-<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Finanças do Red</title>
-  
-  <!-- Tailwind CSS para o visual premium -->
-  <script src="https://cdn.tailwindcss.com"></script>
-  
-  <!-- React e ReactDOM (Carregamento direto e seguro via CDN) -->
-  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
-  
-  <!-- Babel para compilar o código React no próprio navegador -->
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+import React, { useState, useEffect, useRef } from 'react';
 
-  <!-- Configurações do PWA -->
-  <link rel="manifest" href="./manifest.json">
-  <meta name="theme-color" content="#059669">
-  <link rel="apple-touch-icon" href="icon-192.png">
-</head>
-<body class="bg-slate-50 text-slate-800 font-sans antialiased pb-12">
+// Categorias padrão para as despesas
+const DEFAULT_CATEGORIES = [
+  { id: 'moradia', name: 'Moradia', icon: '🏠', color: 'bg-blue-100 text-blue-700 border-blue-200' },
+  { id: 'alimentacao', name: 'Alimentação', icon: '🍔', color: 'bg-amber-100 text-amber-700 border-amber-200' },
+  { id: 'transporte', name: 'Transporte', icon: '🚗', color: 'bg-indigo-100 text-indigo-700 border-indigo-200' },
+  { id: 'lazer', name: 'Lazer & Viagens', icon: '🎉', color: 'bg-purple-100 text-purple-700 border-purple-200' },
+  { id: 'saude', name: 'Saúde', icon: '❤️', color: 'bg-rose-100 text-rose-700 border-rose-200' },
+  { id: 'educacao', name: 'Educação', icon: '📚', color: 'bg-emerald-100 text-emerald-700 border-emerald-200' },
+  { id: 'outros', name: 'Outros', icon: '🏷️', color: 'bg-slate-100 text-slate-700 border-slate-200' }
+];
 
-  <!-- O ponto de entrada onde o React vai desenhar o seu app -->
-  <div id="root"></div>
-
-  <!-- Script para ativar o Service Worker com limpeza preventiva de cache antigo -->
-  <script>
-    // 1. Limpa preventivamente o cache do navegador para descartar versões antigas com erros de 'import'
-    if ('caches' in window) {
-      caches.keys().then(function(names) {
-        for (let name of names) {
-          caches.delete(name);
-        }
-      });
+// Gerador de ID robusto e compatível com ambientes restritos/sandboxed
+const generateUUID = () => {
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
     }
+  } catch (e) {}
+  return Math.random().toString(36).substring(2, 15) + Date.now().toString(36);
+};
 
-    // 2. Registra o Service Worker e força a verificação de atualizações imediatas
-    if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
-        navigator.serviceWorker.register('./sw.js')
-          .then(reg => {
-            console.log('Service Worker registrado com sucesso!', reg.scope);
-            // Força a busca por arquivos atualizados no servidor
-            reg.update();
-          })
-          .catch(err => console.log('Falha ao registrar o Service Worker:', err));
-      });
+export default function App() {
+  // --- ESTADOS ---
+  const [currentMonth, setCurrentMonth] = useState('2026-06'); // Formato "YYYY-MM"
+  const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard' | 'spreadsheet' | 'backup'
+  const fileInputRef = useRef(null);
+  
+  // Dicionário de orçamentos por mês: { "YYYY-MM": { income, savingsGoal } }
+  const [monthlyBudgets, setMonthlyBudgets] = useState({
+    '2026-06': { income: 5000, savingsGoal: 1000 }
+  });
+
+  const [expenses, setExpenses] = useState([
+    // Dados de exemplo para o mês de Junho/2026
+    { id: '1', description: 'Aluguel e Condomínio', amount: 1500, type: 'fixed', category: 'moradia', date: '2026-06-01' },
+    { id: '2', description: 'Supermercado Mensal', amount: 650, type: 'fixed', category: 'alimentacao', date: '2026-06-02' },
+    { id: '3', description: 'Combustível', amount: 300, type: 'one-time', category: 'transporte', date: '2026-06-05' },
+    { id: '4', description: 'Jantar de Aniversário', amount: 180, type: 'one-time', category: 'lazer', date: '2026-06-08' },
+    { id: '5', description: 'Farmácia', amount: 95, type: 'one-time', category: 'saude', date: '2026-06-10' },
+    { id: '6', description: 'Curso Online de Tech', amount: 250, type: 'fixed', category: 'educacao', date: '2026-06-12' }
+  ]);
+
+  // Valores de fallback se o mês selecionado não possuir orçamento ainda
+  const defaultIncome = 5000;
+  const defaultSavingsGoal = 1000;
+
+  // Orçamento ativo do mês selecionado
+  const activeBudget = monthlyBudgets[currentMonth] || { income: defaultIncome, savingsGoal: defaultSavingsGoal };
+  const income = activeBudget.income;
+  const savingsGoal = activeBudget.savingsGoal;
+
+  // Formulário de Nova Despesa
+  const [newDesc, setNewDesc] = useState('');
+  const [newAmount, setNewAmount] = useState('');
+  const [newType, setNewType] = useState('fixed'); // fixed ou one-time
+  const [newCategory, setNewCategory] = useState('moradia');
+  const [newDate, setNewDate] = useState('2026-06-01');
+
+  // Controles de edição de Salário e Meta
+  const [isEditingIncome, setIsEditingIncome] = useState(false);
+  const [tempIncome, setTempIncome] = useState(income);
+  const [isEditingGoal, setIsEditingGoal] = useState(false);
+  const [tempGoal, setTempGoal] = useState(savingsGoal);
+
+  // Filtros de listagem
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filterType, setFilterType] = useState('all'); // all, fixed, one-time
+  const [filterCategory, setFilterCategory] = useState('all');
+
+  // Notificações
+  const [notification, setNotification] = useState(null);
+
+  // --- SINCRONIZAÇÃO DE TEMPORÁRIOS QUANDO O MÊS MUDAR ---
+  useEffect(() => {
+    setTempIncome(income);
+    setTempGoal(savingsGoal);
+    // Atualiza o formulário para apontar para o primeiro dia do novo mês selecionado
+    setNewDate(`${currentMonth}-01`);
+  }, [currentMonth, monthlyBudgets]);
+
+  // --- PERSISTÊNCIA LOCAL ---
+  useEffect(() => {
+    try {
+      const savedBudgets = localStorage.getItem('red_finance_monthly_budgets_v2');
+      const savedExpenses = localStorage.getItem('red_finance_expenses_v2');
+      const savedCurrentMonth = localStorage.getItem('red_finance_current_month');
+
+      if (savedBudgets) {
+        setMonthlyBudgets(JSON.parse(savedBudgets));
+      }
+      if (savedExpenses) {
+        setExpenses(JSON.parse(savedExpenses));
+      }
+      if (savedCurrentMonth) {
+        setCurrentMonth(savedCurrentMonth);
+      }
+    } catch (e) {
+      console.warn("LocalStorage inacessível.");
     }
-  </script>
+  }, []);
 
-  <!-- O código do seu Painel Financeiro ajustado para rodar sem "imports" -->
-  <script type="text/babel">
-    const { useState, useEffect, useRef } = React;
+  const saveData = (updatedBudgets, updatedExpenses, monthToSave = currentMonth) => {
+    try {
+      localStorage.setItem('red_finance_monthly_budgets_v2', JSON.stringify(updatedBudgets));
+      localStorage.setItem('red_finance_expenses_v2', JSON.stringify(updatedExpenses));
+      localStorage.setItem('red_finance_current_month', monthToSave);
+    } catch (e) {
+      // Falha silenciosa se estiver num iframe restrito
+    }
+  };
 
-    const DEFAULT_CATEGORIES = [
-      { id: 'moradia', name: 'Moradia', icon: '🏠', color: 'bg-blue-100 text-blue-700 border-blue-200' },
-      { id: 'alimentacao', name: 'Alimentação', icon: '🍔', color: 'bg-amber-100 text-amber-700 border-amber-200' },
-      { id: 'transporte', name: 'Transporte', icon: '🚗', color: 'bg-indigo-100 text-indigo-700 border-indigo-200' },
-      { id: 'lazer', name: 'Lazer & Viagens', icon: '🎉', color: 'bg-purple-100 text-purple-700 border-purple-200' },
-      { id: 'saude', name: 'Saúde', icon: '❤️', color: 'bg-rose-100 text-rose-700 border-rose-200' },
-      { id: 'educacao', name: 'Educação', icon: '📚', color: 'bg-emerald-100 text-emerald-700 border-emerald-200' },
-      { id: 'outros', name: 'Outros', icon: '🏷️', color: 'bg-slate-100 text-slate-700 border-slate-200' }
+  const triggerNotification = (message, type = 'success') => {
+    setNotification({ message, type });
+    setTimeout(() => setNotification(null), 3000);
+  };
+
+  // --- NAVEGAÇÃO DE MESES ---
+  const formatMonthName = (monthStr) => {
+    const [year, month] = monthStr.split('-');
+    const months = [
+      'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+      'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
     ];
+    return `${months[parseInt(month, 10) - 1]} de ${year}`;
+  };
 
-    function App() {
-      const [currentMonth, setCurrentMonth] = useState('2026-06');
-      const [activeTab, setActiveTab] = useState('dashboard');
-      const fileInputRef = useRef(null);
+  const navigateMonth = (direction) => {
+    const [year, month] = currentMonth.split('-').map(Number);
+    let newYear = year;
+    let newMonth = month + direction;
+
+    if (newMonth > 12) {
+      newMonth = 1;
+      newYear += 1;
+    } else if (newMonth < 1) {
+      newMonth = 12;
+      newYear -= 1;
+    }
+
+    const newMonthStr = `${newYear}-${String(newMonth).padStart(2, '0')}`;
+    setCurrentMonth(newMonthStr);
+    saveData(monthlyBudgets, expenses, newMonthStr);
+  };
+
+  const handleMonthPickerChange = (e) => {
+    if (e.target.value) {
+      setCurrentMonth(e.target.value);
+      saveData(monthlyBudgets, expenses, e.target.value);
+    }
+  };
+
+  // --- AÇÕES DO ORÇAMENTO (SALÁRIO E META) ---
+  const handleSaveIncome = () => {
+    const val = parseFloat(tempIncome);
+    if (!isNaN(val) && val >= 0) {
+      const updated = {
+        ...monthlyBudgets,
+        [currentMonth]: {
+          ...activeBudget,
+          income: val
+        }
+      };
+      setMonthlyBudgets(updated);
+      setIsEditingIncome(false);
+      saveData(updated, expenses);
+      triggerNotification("Renda atualizada para este mês!");
+    }
+  };
+
+  const handleSaveGoal = () => {
+    const val = parseFloat(tempGoal);
+    if (!isNaN(val) && val >= 0) {
+      const updated = {
+        ...monthlyBudgets,
+        [currentMonth]: {
+          ...activeBudget,
+          savingsGoal: val
+        }
+      };
+      setMonthlyBudgets(updated);
+      setIsEditingGoal(false);
+      saveData(updated, expenses);
+      triggerNotification("Meta de poupança atualizada para este mês!");
+    }
+  };
+
+  // --- GESTÃO DE DESPESAS ---
+  const handleAddExpense = (e) => {
+    e.preventDefault();
+    const amountNum = parseFloat(newAmount);
+    if (!newDesc.trim() || isNaN(amountNum) || amountNum <= 0) {
+      triggerNotification("Por favor, informe a descrição e um valor válido.", "error");
+      return;
+    }
+
+    const newExpense = {
+      id: generateUUID(),
+      description: newDesc.trim(),
+      amount: amountNum,
+      type: newType,
+      category: newCategory,
+      date: newDate || `${currentMonth}-01`
+    };
+
+    const updated = [newExpense, ...expenses];
+    setExpenses(updated);
+    saveData(monthlyBudgets, updated);
+
+    // Reset formulário básico
+    setNewDesc('');
+    setNewAmount('');
+    triggerNotification("Gasto registrado!");
+  };
+
+  const handleDeleteExpense = (id) => {
+    const updated = expenses.filter(exp => exp.id !== id);
+    setExpenses(updated);
+    saveData(monthlyBudgets, updated);
+    triggerNotification("Item removido.", "info");
+  };
+
+  // Atualização direta na planilha
+  const handleSpreadsheetCellChange = (id, field, value) => {
+    const updatedExpenses = expenses.map(exp => {
+      if (exp.id === id) {
+        let parsedValue = value;
+        if (field === 'amount') {
+          parsedValue = parseFloat(value) || 0;
+        }
+        return { ...exp, [field]: parsedValue };
+      }
+      return exp;
+    });
+    setExpenses(updatedExpenses);
+    saveData(monthlyBudgets, updatedExpenses);
+  };
+
+  // --- COPIAR CONTAS FIXAS DO MÊS ANTERIOR ---
+  const handleImportPreviousFixed = () => {
+    const [year, month] = currentMonth.split('-').map(Number);
+    let prevYear = year;
+    let prevMonth = month - 1;
+
+    if (prevMonth < 1) {
+      prevMonth = 12;
+      prevYear -= 1;
+    }
+
+    const prevMonthStr = `${prevYear}-${String(prevMonth).padStart(2, '0')}`;
+    const previousFixedExpenses = expenses.filter(
+      exp => exp.date.substring(0, 7) === prevMonthStr && exp.type === 'fixed'
+    );
+
+    if (previousFixedExpenses.length === 0) {
+      triggerNotification("Não encontramos despesas fixas no mês anterior para importar.", "error");
+      return;
+    }
+
+    const importedExpenses = previousFixedExpenses.map(oldExp => {
+      const day = oldExp.date.substring(8, 10);
+      return {
+        ...oldExp,
+        id: generateUUID(),
+        date: `${currentMonth}-${day}`
+      };
+    });
+
+    const updated = [...importedExpenses, ...expenses];
+    setExpenses(updated);
+    saveData(monthlyBudgets, updated);
+    triggerNotification(`${importedExpenses.length} despesas fixas replicadas para este mês com sucesso!`);
+  };
+
+  // --- CÁLCULOS DINÂMICOS DO MÊS ATIVO ---
+  const activeMonthExpenses = expenses.filter(
+    exp => exp.date.substring(0, 7) === currentMonth
+  );
+
+  const totalFixed = activeMonthExpenses
+    .filter(exp => exp.type === 'fixed')
+    .reduce((sum, exp) => sum + exp.amount, 0);
+
+  const totalOneTime = activeMonthExpenses
+    .filter(exp => exp.type === 'one-time')
+    .reduce((sum, exp) => sum + exp.amount, 0);
+
+  const totalExpenses = totalFixed + totalOneTime;
+  const remainingBalance = income - totalExpenses;
+  const savingsGoalPercentage = Math.min(Math.round((remainingBalance / (savingsGoal || 1)) * 100), 100);
+
+  // Totais por Categorias (Apenas do Mês Selecionado)
+  const categoryTotals = DEFAULT_CATEGORIES.map(cat => {
+    const total = activeMonthExpenses
+      .filter(exp => exp.category === cat.id)
+      .reduce((sum, exp) => sum + exp.amount, 0);
+    return { ...cat, total };
+  }).filter(cat => cat.total > 0);
+
+  // Distribuição 50/30/20 do mês selecionado
+  const fixedPercentageOfIncome = income > 0 ? (totalFixed / income) * 100 : 0;
+  const oneTimePercentageOfIncome = income > 0 ? (totalOneTime / income) * 100 : 0;
+  const savingsPercentageOfIncome = income > 0 ? (remainingBalance / income) * 100 : 0;
+
+  // Filtragem da lista exibida
+  const filteredExpenses = activeMonthExpenses.filter(exp => {
+    const matchesSearch = exp.description.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesType = filterType === 'all' || exp.type === filterType;
+    const matchesCategory = filterCategory === 'all' || exp.category === filterCategory;
+    return matchesSearch && matchesType && matchesCategory;
+  });
+
+  // --- EXPORTAR E IMPORTAR SISTEMAS ---
+  
+  // 1. Exportar para planilha real (Excel / Google Planilhas via CSV)
+  const handleExportCSV = () => {
+    if (activeMonthExpenses.length === 0) {
+      triggerNotification("Não há gastos cadastrados para exportar neste mês.", "error");
+      return;
+    }
+
+    const headers = ['Data', 'Descricao', 'Categoria', 'Tipo', 'Valor (R$)'];
+    const rows = activeMonthExpenses.map(exp => {
+      const catName = DEFAULT_CATEGORIES.find(c => c.id === exp.category)?.name || 'Outros';
+      const typeLabel = exp.type === 'fixed' ? 'Fixo' : 'Pontual';
+      const formattedAmount = exp.amount.toFixed(2).replace('.', ','); // Formato monetário brasileiro
+      return [exp.date, exp.description, catName, typeLabel, formattedAmount];
+    });
+
+    // BOM para o Excel ler caracteres acentuados corretamente em UTF-8
+    const csvContent = "\uFEFF" + [headers.join(';'), ...rows.map(r => r.join(';'))].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `financas_red_${currentMonth}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    triggerNotification("Planilha exportada com sucesso!");
+  };
+
+  // 2. Copiar tabela direta formatada em colunas (Para dar Ctrl+V no Google Sheets)
+  const handleCopyToClipboardForSheets = () => {
+    if (activeMonthExpenses.length === 0) {
+      triggerNotification("Nenhum dado para copiar.", "error");
+      return;
+    }
+
+    const headers = ['Data', 'Descrição', 'Categoria', 'Tipo', 'Valor (R$)'];
+    const rows = activeMonthExpenses.map(exp => {
+      const catName = DEFAULT_CATEGORIES.find(c => c.id === exp.category)?.name || 'Outros';
+      const typeLabel = exp.type === 'fixed' ? 'Fixo' : 'Pontual';
+      return [exp.date, exp.description, catName, typeLabel, exp.amount.toString().replace('.', ',')];
+    });
+
+    const tsvContent = [headers.join('\t'), ...rows.map(r => r.join('\t'))].join('\n');
+
+    // Usando fallback seguro para iFrame
+    const tempTextArea = document.createElement('textarea');
+    tempTextArea.value = tsvContent;
+    document.body.appendChild(tempTextArea);
+    tempTextArea.select();
+    try {
+      document.execCommand('copy');
+      triggerNotification("Tabela copiada! Agora abra o Excel ou Google Planilhas e aperte Ctrl+V.");
+    } catch (err) {
+      triggerNotification("Erro ao copiar tabela.", "error");
+    }
+    document.body.removeChild(tempTextArea);
+  };
+
+  // 3. Exportar arquivo de Backup Completo (JSON)
+  const handleExportBackup = () => {
+    const backupObj = {
+      monthlyBudgets,
+      expenses,
+      backupDate: new Date().toISOString(),
+      owner: "Red"
+    };
+
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(backupObj, null, 2));
+    const link = document.createElement("a");
+    link.setAttribute("href", dataStr);
+    link.setAttribute("download", `backup_financeiro_completo_red.json`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    triggerNotification("Backup gerado e salvo com sucesso!");
+  };
+
+  // 4. Importar arquivo de Backup Completo (JSON)
+  const handleImportBackup = (e) => {
+    const fileReader = new FileReader();
+    const file = e.target.files[0];
+    if (!file) return;
+
+    fileReader.onload = (event) => {
+      try {
+        const parsed = JSON.parse(event.target.result);
+        if (parsed.monthlyBudgets && parsed.expenses) {
+          setMonthlyBudgets(parsed.monthlyBudgets);
+          setExpenses(parsed.expenses);
+          
+          // Tenta pegar o último mês ativo do backup
+          if (parsed.expenses.length > 0) {
+            const sortedDates = [...parsed.expenses].sort((a, b) => b.date.localeCompare(a.date));
+            const latestMonth = sortedDates[0].date.substring(0, 7);
+            setCurrentMonth(latestMonth);
+            saveData(parsed.monthlyBudgets, parsed.expenses, latestMonth);
+          } else {
+            saveData(parsed.monthlyBudgets, parsed.expenses, currentMonth);
+          }
+
+          triggerNotification("Backup restaurado e sincronizado!");
+        } else {
+          triggerNotification("Arquivo de backup inválido.", "error");
+        }
+      } catch (err) {
+        triggerNotification("Erro ao processar o arquivo de backup.", "error");
+      }
+    };
+    fileReader.readAsText(file);
+    // Limpa o input file
+    e.target.value = null;
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 text-slate-800 font-sans antialiased pb-12">
       
-      const [monthlyBudgets, setMonthlyBudgets] = useState({
-        '2026-06': { income: 5000, savingsGoal: 1000 }
-      });
+      {/* Notificação Flutuante */}
+      {notification && (
+        <div className={`fixed top-4 right-4 z-50 flex items-center gap-2 px-4 py-3 rounded-xl shadow-lg border transition-all duration-300 ${
+          notification.type === 'error' ? 'bg-rose-50 border-rose-200 text-rose-800' :
+          notification.type === 'info' ? 'bg-blue-50 border-blue-200 text-blue-800' :
+          'bg-emerald-50 border-emerald-200 text-emerald-800'
+        }`}>
+          <span className="text-lg">
+            {notification.type === 'error' ? '⚠️' : notification.type === 'info' ? 'ℹ️' : '✨'}
+          </span>
+          <span className="text-sm font-semibold">{notification.message}</span>
+        </div>
+      )}
 
-      const [expenses, setExpenses] = useState([
-        { id: '1', description: 'Aluguel e Condomínio', amount: 1500, type: 'fixed', category: 'moradia', date: '2026-06-01' },
-        { id: '2', description: 'Supermercado Mensal', amount: 650, type: 'fixed', category: 'alimentacao', date: '2026-06-02' },
-        { id: '3', description: 'Combustível', amount: 300, type: 'one-time', category: 'transporte', date: '2026-06-05' },
-        { id: '4', description: 'Jantar de Aniversário', amount: 180, type: 'one-time', category: 'lazer', date: '2026-06-08' },
-        { id: '5', description: 'Farmácia', amount: 95, type: 'one-time', category: 'saude', date: '2026-06-10' },
-        { id: '6', description: 'Curso Online de Tech', amount: 250, type: 'fixed', category: 'educacao', date: '2026-06-12' }
-      ]);
+      {/* Header com o Seletor de Meses e Seletor de Abas */}
+      <header className="bg-gradient-to-r from-emerald-600 to-teal-700 text-white shadow-md">
+        <div className="max-w-7xl mx-auto px-4 py-6 sm:px-6 lg:px-8 flex flex-col md:flex-row justify-between items-center gap-6">
+          <div>
+            <span className="text-xs font-semibold tracking-wider uppercase opacity-80 bg-emerald-500/30 px-2.5 py-1 rounded">
+              Planejamento Financeiro Expandido
+            </span>
+            <h1 className="text-3xl font-bold tracking-tight mt-1">Olá, Red! 👋</h1>
+            <p className="text-emerald-100 text-sm mt-0.5">Navegue, planeje e faça cópias de segurança de suas finanças.</p>
+          </div>
 
-      const defaultIncome = 5000;
-      const defaultSavingsGoal = 1000;
-
-      const activeBudget = monthlyBudgets[currentMonth] || { income: defaultIncome, savingsGoal: defaultSavingsGoal };
-      const income = activeBudget.income;
-      const savingsGoal = activeBudget.savingsGoal;
-
-      const [newDesc, setNewDesc] = useState('');
-      const [newAmount, setNewAmount] = useState('');
-      const [newType, setNewType] = useState('fixed');
-      const [newCategory, setNewCategory] = useState('moradia');
-      const [newDate, setNewDate] = useState('2026-06-01');
-
-      const [isEditingIncome, setIsEditingIncome] = useState(false);
-      const [tempIncome, setTempIncome] = useState(income);
-      const [isEditingGoal, setIsEditingGoal] = useState(false);
-      const [tempGoal, setTempGoal] = useState(savingsGoal);
-
-      const [searchTerm, setSearchTerm] = useState('');
-      const [filterType, setFilterType] = useState('all');
-      const [filterCategory, setFilterCategory] = useState('all');
-      const [notification, setNotification] = useState(null);
-
-      useEffect(() => {
-        setTempIncome(income);
-        setTempGoal(savingsGoal);
-        setNewDate(`${currentMonth}-01`);
-      }, [currentMonth, monthlyBudgets]);
-
-      useEffect(() => {
-        try {
-          const savedBudgets = localStorage.getItem('red_finance_monthly_budgets_v2');
-          const savedExpenses = localStorage.getItem('red_finance_expenses_v2');
-          const savedCurrentMonth = localStorage.getItem('red_finance_current_month');
-
-          if (savedBudgets) setMonthlyBudgets(JSON.parse(savedBudgets));
-          if (savedExpenses) setExpenses(JSON.parse(savedExpenses));
-          if (savedCurrentMonth) setCurrentMonth(savedCurrentMonth);
-        } catch (e) {
-          console.warn("LocalStorage inacessível.");
-        }
-      }, []);
-
-      const saveData = (updatedBudgets, updatedExpenses, monthToSave = currentMonth) => {
-        try {
-          localStorage.setItem('red_finance_monthly_budgets_v2', JSON.stringify(updatedBudgets));
-          localStorage.setItem('red_finance_expenses_v2', JSON.stringify(updatedExpenses));
-          localStorage.setItem('red_finance_current_month', monthToSave);
-        } catch (e) {}
-      };
-
-      const triggerNotification = (message, type = 'success') => {
-        setNotification({ message, type });
-        setTimeout(() => setNotification(null), 3000);
-      };
-
-      const formatMonthName = (monthStr) => {
-        const [year, month] = monthStr.split('-');
-        const months = [
-          'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
-          'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
-        ];
-        return `${months[parseInt(month, 10) - 1]} de ${year}`;
-      };
-
-      const navigateMonth = (direction) => {
-        const [year, month] = currentMonth.split('-').map(Number);
-        let newYear = year;
-        let newMonth = month + direction;
-
-        if (newMonth > 12) {
-          newMonth = 1;
-          newYear += 1;
-        } else if (newMonth < 1) {
-          newMonth = 12;
-          newYear -= 1;
-        }
-
-        const newMonthStr = `${newYear}-${String(newMonth).padStart(2, '0')}`;
-        setCurrentMonth(newMonthStr);
-        saveData(monthlyBudgets, expenses, newMonthStr);
-      };
-
-      const handleMonthPickerChange = (e) => {
-        if (e.target.value) {
-          setCurrentMonth(e.target.value);
-          saveData(monthlyBudgets, expenses, e.target.value);
-        }
-      };
-
-      const handleSaveIncome = () => {
-        const val = parseFloat(tempIncome);
-        if (!isNaN(val) && val >= 0) {
-          const updated = { ...monthlyBudgets, [currentMonth]: { ...activeBudget, income: val } };
-          setMonthlyBudgets(updated);
-          setIsEditingIncome(false);
-          saveData(updated, expenses);
-          triggerNotification("Renda atualizada para este mês!");
-        }
-      };
-
-      const handleSaveGoal = () => {
-        const val = parseFloat(tempGoal);
-        if (!isNaN(val) && val >= 0) {
-          const updated = { ...monthlyBudgets, [currentMonth]: { ...activeBudget, savingsGoal: val } };
-          setMonthlyBudgets(updated);
-          setIsEditingGoal(false);
-          saveData(updated, expenses);
-          triggerNotification("Meta de poupança atualizada!");
-        }
-      };
-
-      const handleAddExpense = (e) => {
-        e.preventDefault();
-        const amountNum = parseFloat(newAmount);
-        if (!newDesc.trim() || isNaN(amountNum) || amountNum <= 0) {
-          triggerNotification("Informe uma descrição e um valor válido.", "error");
-          return;
-        }
-
-        const newExpense = {
-          id: crypto.randomUUID(),
-          description: newDesc.trim(),
-          amount: amountNum,
-          type: newType,
-          category: newCategory,
-          date: newDate || `${currentMonth}-01`
-        };
-
-        const updated = [newExpense, ...expenses];
-        setExpenses(updated);
-        saveData(monthlyBudgets, updated);
-        setNewDesc('');
-        setNewAmount('');
-        triggerNotification("Gasto registrado!");
-      };
-
-      const handleDeleteExpense = (id) => {
-        const updated = expenses.filter(exp => exp.id !== id);
-        setExpenses(updated);
-        saveData(monthlyBudgets, updated);
-        triggerNotification("Item removido.", "info");
-      };
-
-      const handleSpreadsheetCellChange = (id, field, value) => {
-        const updatedExpenses = expenses.map(exp => {
-          if (exp.id === id) {
-            let parsedValue = value;
-            if (field === 'amount') parsedValue = parseFloat(value) || 0;
-            return { ...exp, [field]: parsedValue };
-          }
-          return exp;
-        });
-        setExpenses(updatedExpenses);
-        saveData(monthlyBudgets, updatedExpenses);
-      };
-
-      const handleImportPreviousFixed = () => {
-        const [year, month] = currentMonth.split('-').map(Number);
-        let prevYear = year;
-        let prevMonth = month - 1;
-
-        if (prevMonth < 1) {
-          prevMonth = 12;
-          prevYear -= 1;
-        }
-
-        const prevMonthStr = `${prevYear}-${String(prevMonth).padStart(2, '0')}`;
-        const previousFixedExpenses = expenses.filter(
-          exp => exp.date.substring(0, 7) === prevMonthStr && exp.type === 'fixed'
-        );
-
-        if (previousFixedExpenses.length === 0) {
-          triggerNotification("Não encontramos despesas fixas no mês anterior.", "error");
-          return;
-        }
-
-        const importedExpenses = previousFixedExpenses.map(oldExp => {
-          const day = oldExp.date.substring(8, 10);
-          return {
-            ...oldExp,
-            id: crypto.randomUUID(),
-            date: `${currentMonth}-${day}`
-          };
-        });
-
-        const updated = [...importedExpenses, ...expenses];
-        setExpenses(updated);
-        saveData(monthlyBudgets, updated);
-        triggerNotification(`${importedExpenses.length} despesas fixas replicadas!`);
-      };
-
-      const activeMonthExpenses = expenses.filter(exp => exp.date.substring(0, 7) === currentMonth);
-      const totalFixed = activeMonthExpenses.filter(exp => exp.type === 'fixed').reduce((sum, exp) => sum + exp.amount, 0);
-      const totalOneTime = activeMonthExpenses.filter(exp => exp.type === 'one-time').reduce((sum, exp) => sum + exp.amount, 0);
-      const totalExpenses = totalFixed + totalOneTime;
-      const remainingBalance = income - totalExpenses;
-      const savingsGoalPercentage = Math.min(Math.round((remainingBalance / (savingsGoal || 1)) * 100), 100);
-
-      const categoryTotals = DEFAULT_CATEGORIES.map(cat => {
-        const total = activeMonthExpenses.filter(exp => exp.category === cat.id).reduce((sum, exp) => sum + exp.amount, 0);
-        return { ...cat, total };
-      }).filter(cat => cat.total > 0);
-
-      const fixedPercentageOfIncome = income > 0 ? (totalFixed / income) * 100 : 0;
-      const oneTimePercentageOfIncome = income > 0 ? (totalOneTime / income) * 100 : 0;
-      const savingsPercentageOfIncome = income > 0 ? (remainingBalance / income) * 100 : 0;
-
-      const filteredExpenses = activeMonthExpenses.filter(exp => {
-        const matchesSearch = exp.description.toLowerCase().includes(searchTerm.toLowerCase());
-        const matchesType = filterType === 'all' || exp.type === filterType;
-        const matchesCategory = filterCategory === 'all' || exp.category === filterCategory;
-        return matchesSearch && matchesType && matchesCategory;
-      });
-
-      const handleExportCSV = () => {
-        if (activeMonthExpenses.length === 0) {
-          triggerNotification("Não há gastos para exportar.", "error");
-          return;
-        }
-        const headers = ['Data', 'Descricao', 'Categoria', 'Tipo', 'Valor (R$)'];
-        const rows = activeMonthExpenses.map(exp => {
-          const catName = DEFAULT_CATEGORIES.find(c => c.id === exp.category)?.name || 'Outros';
-          const typeLabel = exp.type === 'fixed' ? 'Fixo' : 'Pontual';
-          const formattedAmount = exp.amount.toFixed(2).replace('.', ',');
-          return [exp.date, exp.description, catName, typeLabel, formattedAmount];
-        });
-        const csvContent = "\uFEFF" + [headers.join(';'), ...rows.map(r => r.join(';'))].join('\n');
-        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement("a");
-        link.setAttribute("href", url);
-        link.setAttribute("download", `financas_red_${currentMonth}.csv`);
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        triggerNotification("Planilha exportada!");
-      };
-
-      const handleCopyToClipboardForSheets = () => {
-        if (activeMonthExpenses.length === 0) {
-          triggerNotification("Nenhum dado para copiar.", "error");
-          return;
-        }
-        const headers = ['Data', 'Descrição', 'Categoria', 'Tipo', 'Valor (R$)'];
-        const rows = activeMonthExpenses.map(exp => {
-          const catName = DEFAULT_CATEGORIES.find(c => c.id === exp.category)?.name || 'Outros';
-          const typeLabel = exp.type === 'fixed' ? 'Fixo' : 'Pontual';
-          return [exp.date, exp.description, catName, typeLabel, exp.amount.toString().replace('.', ',')];
-        });
-        const tsvContent = [headers.join('\t'), ...rows.map(r => r.join('\t'))].join('\n');
-        const tempTextArea = document.createElement('textarea');
-        tempTextArea.value = tsvContent;
-        document.body.appendChild(tempTextArea);
-        tempTextArea.select();
-        try {
-          document.execCommand('copy');
-          triggerNotification("Tabela copiada! Cole no Excel ou Google Planilhas.");
-        } catch (err) {
-          triggerNotification("Erro ao copiar.", "error");
-        }
-        document.body.removeChild(tempTextArea);
-      };
-
-      const handleExportBackup = () => {
-        const backupObj = { monthlyBudgets, expenses, backupDate: new Date().toISOString(), owner: "Red" };
-        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(backupObj, null, 2));
-        const link = document.createElement("a");
-        link.setAttribute("href", dataStr);
-        link.setAttribute("download", `backup_financeiro_red.json`);
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        triggerNotification("Backup baixado com sucesso!");
-      };
-
-      const handleImportBackup = (e) => {
-        const fileReader = new FileReader();
-        const file = e.target.files[0];
-        if (!file) return;
-
-        fileReader.onload = (event) => {
-          try {
-            const parsed = JSON.parse(event.target.result);
-            if (parsed.monthlyBudgets && parsed.expenses) {
-              setMonthlyBudgets(parsed.monthlyBudgets);
-              setExpenses(parsed.expenses);
-              if (parsed.expenses.length > 0) {
-                const sortedDates = [...parsed.expenses].sort((a, b) => b.date.localeCompare(a.date));
-                const latestMonth = sortedDates[0].date.substring(0, 7);
-                setCurrentMonth(latestMonth);
-                saveData(parsed.monthlyBudgets, parsed.expenses, latestMonth);
-              } else {
-                saveData(parsed.monthlyBudgets, parsed.expenses, currentMonth);
-              }
-              triggerNotification("Backup restaurado!");
-            } else {
-              triggerNotification("Backup inválido.", "error");
-            }
-          } catch (err) {
-            triggerNotification("Erro ao ler backup.", "error");
-          }
-        };
-        fileReader.readAsText(file);
-        e.target.value = null;
-      };
-
-      return (
-        <div className="min-h-screen bg-slate-50 text-slate-800 font-sans antialiased pb-12">
-          {/* Header */}
-          <header className="bg-gradient-to-r from-emerald-600 to-teal-700 text-white shadow-md">
-            <div className="max-w-7xl mx-auto px-4 py-6 sm:px-6 lg:px-8 flex flex-col md:flex-row justify-between items-center gap-6">
-              <div>
-                <span className="text-xs font-semibold tracking-wider uppercase opacity-80 bg-emerald-500/30 px-2.5 py-1 rounded">
-                  PWA Instalável
-                </span>
-                <h1 className="text-3xl font-bold tracking-tight mt-1">Olá, Red! 👋</h1>
-                <p className="text-emerald-100 text-sm mt-0.5">Controle financeiro rápido e seguro direto do celular.</p>
-              </div>
-
-              {/* Seletor de Meses */}
-              <div className="flex items-center gap-3 bg-emerald-800/40 p-3 rounded-2xl border border-emerald-500/20 backdrop-blur-md">
-                <button onClick={() => navigateMonth(-1)} className="p-2 bg-emerald-700 hover:bg-emerald-600 rounded-lg text-white font-bold transition text-sm">◀</button>
-                <div className="flex flex-col items-center px-2 min-w-[150px]">
-                  <span className="text-xs opacity-75 uppercase font-bold text-[10px]">Mês de Referência</span>
-                  <span className="text-base font-extrabold tracking-wide text-center">{formatMonthName(currentMonth)}</span>
-                  <input type="month" value={currentMonth} onChange={handleMonthPickerChange} className="mt-1 text-[10px] bg-emerald-900/60 text-emerald-100 border-none rounded px-1.5 py-0.5 cursor-pointer outline-none" />
-                </div>
-                <button onClick={() => navigateMonth(1)} className="p-2 bg-emerald-700 hover:bg-emerald-600 rounded-lg text-white font-bold transition text-sm">▶</button>
-              </div>
-            </div>
-
-            {/* Abas */}
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 bg-emerald-900/20 border-t border-emerald-500/20">
-              <div className="flex space-x-1 py-2">
-                <button onClick={() => setActiveTab('dashboard')} className={`px-4 py-2 text-xs font-bold rounded-lg transition ${activeTab === 'dashboard' ? 'bg-white text-emerald-800 shadow' : 'text-emerald-100 hover:bg-emerald-800/30'}`}>📊 Painel Visual</button>
-                <button onClick={() => setActiveTab('spreadsheet')} className={`px-4 py-2 text-xs font-bold rounded-lg transition ${activeTab === 'spreadsheet' ? 'bg-white text-emerald-800 shadow' : 'text-emerald-100 hover:bg-emerald-800/30'}`}>🟢 Planilha (Grid)</button>
-                <button onClick={() => setActiveTab('backup')} className={`px-4 py-2 text-xs font-bold rounded-lg transition ${activeTab === 'backup' ? 'bg-white text-emerald-800 shadow' : 'text-emerald-100 hover:bg-emerald-800/30'}`}>💾 Backup e Segurança</button>
-              </div>
-            </div>
-          </header>
-
-          {/* Conteúdo Principal */}
-          <main className="max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8 space-y-8">
+          {/* Navegador de Meses Interativo */}
+          <div className="flex items-center gap-3 bg-emerald-800/40 p-3 rounded-2xl border border-emerald-500/20 backdrop-blur-md">
+            <button
+              onClick={() => navigateMonth(-1)}
+              className="p-2 bg-emerald-700 hover:bg-emerald-600 rounded-lg text-white font-bold transition text-sm animate-pulse-once"
+              title="Mês Anterior"
+            >
+              ◀
+            </button>
             
-            {/* KPI Cards */}
-            <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-              <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex flex-col justify-between hover:shadow-md transition-shadow">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Renda do Mês</p>
-                    {isEditingIncome ? (
-                      <div className="mt-2 flex items-center gap-2">
-                        <span className="text-slate-500 font-semibold">R$</span>
-                        <input type="number" value={tempIncome} onChange={(e) => setTempIncome(e.target.value)} className="w-24 px-2 py-1 border rounded text-lg font-bold focus:outline-emerald-500" autoFocus />
-                      </div>
-                    ) : (
-                      <h3 className="text-2xl font-black text-slate-800 mt-1">R$ {income.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</h3>
-                    )}
+            <div className="flex flex-col items-center px-2 min-w-[150px]">
+              <span className="text-xs opacity-75 uppercase font-bold tracking-wider text-[10px]">Mês de Referência</span>
+              <span className="text-base font-extrabold tracking-wide text-center">
+                {formatMonthName(currentMonth)}
+              </span>
+              <input
+                type="month"
+                value={currentMonth}
+                onChange={handleMonthPickerChange}
+                className="mt-1 text-[10px] bg-emerald-900/60 text-emerald-100 border-none rounded px-1.5 py-0.5 focus:ring-1 focus:ring-emerald-400 cursor-pointer outline-none"
+              />
+            </div>
+
+            <button
+              onClick={() => navigateMonth(1)}
+              className="p-2 bg-emerald-700 hover:bg-emerald-600 rounded-lg text-white font-bold transition text-sm"
+              title="Próximo Mês"
+            >
+              ▶
+            </button>
+          </div>
+        </div>
+
+        {/* Menu de Abas */}
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 bg-emerald-900/20 border-t border-emerald-500/20">
+          <div className="flex space-x-1 py-2">
+            <button
+              onClick={() => setActiveTab('dashboard')}
+              className={`px-4 py-2 text-xs font-bold rounded-lg transition ${
+                activeTab === 'dashboard'
+                  ? 'bg-white text-emerald-800 shadow'
+                  : 'text-emerald-100 hover:bg-emerald-800/30'
+              }`}
+            >
+              📊 Painel Visual
+            </button>
+            <button
+              onClick={() => setActiveTab('spreadsheet')}
+              className={`px-4 py-2 text-xs font-bold rounded-lg transition ${
+                activeTab === 'spreadsheet'
+                  ? 'bg-white text-emerald-800 shadow'
+                  : 'text-emerald-100 hover:bg-emerald-800/30'
+              }`}
+            >
+              🟢 Planilha Rápida (Grid)
+            </button>
+            <button
+              onClick={() => setActiveTab('backup')}
+              className={`px-4 py-2 text-xs font-bold rounded-lg transition ${
+                activeTab === 'backup'
+                  ? 'bg-white text-emerald-800 shadow'
+                  : 'text-emerald-100 hover:bg-emerald-800/30'
+              }`}
+            >
+              💾 Backups & Segurança
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <main className="max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8 space-y-8">
+        
+        {/* Painel de Resultados do Mês Ativo */}
+        <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex flex-col justify-between hover:shadow-md transition-shadow">
+            <div className="flex justify-between items-start">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Renda do Mês</p>
+                {isEditingIncome ? (
+                  <div className="mt-2 flex items-center gap-2">
+                    <span className="text-slate-500 font-semibold">R$</span>
+                    <input
+                      type="number"
+                      value={tempIncome}
+                      onChange={(e) => setTempIncome(e.target.value)}
+                      className="w-24 px-2 py-1 border rounded text-lg font-bold focus:outline-emerald-500"
+                      autoFocus
+                    />
                   </div>
-                  <div className="p-3 bg-emerald-50 text-emerald-600 rounded-xl">💰</div>
+                ) : (
+                  <h3 className="text-2xl font-black text-slate-800 mt-1">
+                    R$ {income.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </h3>
+                )}
+              </div>
+              <div className="p-3 bg-emerald-50 text-emerald-600 rounded-xl">
+                💰
+              </div>
+            </div>
+            <div className="mt-4 pt-3 border-t border-slate-100 flex justify-end">
+              {isEditingIncome ? (
+                <div className="flex gap-2">
+                  <button onClick={() => setIsEditingIncome(false)} className="text-xs text-slate-500 hover:underline px-2 py-1">Cancelar</button>
+                  <button onClick={handleSaveIncome} className="text-xs bg-emerald-600 text-white font-medium px-2.5 py-1 rounded hover:bg-emerald-700 transition">Salvar</button>
                 </div>
-                <div className="mt-4 pt-3 border-t border-slate-100 flex justify-end">
-                  {isEditingIncome ? (
-                    <div className="flex gap-2">
-                      <button onClick={() => setIsEditingIncome(false)} className="text-xs text-slate-500 hover:underline px-2 py-1">Cancelar</button>
-                      <button onClick={handleSaveIncome} className="text-xs bg-emerald-600 text-white font-medium px-2.5 py-1 rounded hover:bg-emerald-700 transition">Salvar</button>
+              ) : (
+                <button onClick={() => { setTempIncome(income); setIsEditingIncome(true); }} className="text-xs text-emerald-600 hover:text-emerald-700 font-semibold flex items-center gap-1">✏️ Ajustar Renda</button>
+              )}
+            </div>
+          </div>
+
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex flex-col justify-between hover:shadow-md transition-shadow">
+            <div className="flex justify-between items-start">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Gastos Fixos</p>
+                <h3 className="text-2xl font-black text-slate-800 mt-1">
+                  R$ {totalFixed.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                </h3>
+              </div>
+              <div className="p-3 bg-blue-50 text-blue-600 rounded-xl">
+                📌
+              </div>
+            </div>
+            <div className="mt-4 pt-3 border-t border-slate-100">
+              <div className="flex items-center justify-between text-xs text-slate-500">
+                <span>Representa {income > 0 ? ((totalFixed / income) * 100).toFixed(1) : 0}% da renda</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex flex-col justify-between hover:shadow-md transition-shadow">
+            <div className="flex justify-between items-start">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Gastos Pontuais</p>
+                <h3 className="text-2xl font-black text-slate-800 mt-1">
+                  R$ {totalOneTime.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                </h3>
+              </div>
+              <div className="p-3 bg-amber-50 text-amber-600 rounded-xl">
+                🛍️
+              </div>
+            </div>
+            <div className="mt-4 pt-3 border-t border-slate-100">
+              <div className="flex items-center justify-between text-xs text-slate-500">
+                <span>Representa {income > 0 ? ((totalOneTime / income) * 100).toFixed(1) : 0}% da renda</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex flex-col justify-between hover:shadow-md transition-shadow">
+            <div className="flex justify-between items-start">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Margem Livre Restante</p>
+                <h3 className={`text-2xl font-black mt-1 ${remainingBalance >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                  R$ {remainingBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                </h3>
+              </div>
+              <div className={`p-3 rounded-xl ${remainingBalance >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+                {remainingBalance >= 0 ? '✅' : '🚨'}
+              </div>
+            </div>
+            <div className="mt-4 pt-3 border-t border-slate-100">
+              <div className="flex items-center justify-between text-xs font-semibold">
+                <span className={remainingBalance >= 0 ? 'text-emerald-600' : 'text-rose-600'}>
+                  {remainingBalance >= 0 ? 'Dentro do planejado!' : 'Orçamento estourado!'}
+                </span>
+              </div>
+            </div>
+          </div>
+
+        </section>
+
+        {/* Notificação/Aviso de Mês Vazio */}
+        {activeMonthExpenses.length === 0 && (
+          <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-6 flex flex-col sm:flex-row justify-between items-center gap-4">
+            <div className="flex items-center gap-4">
+              <span className="text-4xl animate-bounce">🗓️</span>
+              <div>
+                <h4 className="font-bold text-indigo-900 text-lg">Este mês ainda não tem gastos registrados!</h4>
+                <p className="text-sm text-indigo-700 font-medium">Economize tempo e clone todas as despesas fixas recorrentes do mês passado!</p>
+              </div>
+            </div>
+            <button
+              onClick={handleImportPreviousFixed}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm px-5 py-3 rounded-xl transition duration-150 whitespace-nowrap shadow-sm hover:shadow"
+            >
+              🔄 Copiar Contas Fixas
+            </button>
+          </div>
+        )}
+
+        {/* --- ABA 1: DASHBOARD VISUAL --- */}
+        {activeTab === 'dashboard' && (
+          <>
+            <section className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              
+              {/* Meta de Economia para o Mês Selecionado */}
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 lg:col-span-2 flex flex-col justify-between">
+                <div>
+                  <div className="flex justify-between items-center mb-4">
+                    <div>
+                      <h3 className="font-bold text-lg text-slate-800">🎯 Meta de Economia ({formatMonthName(currentMonth)})</h3>
+                      <p className="text-xs text-slate-500">Defina o valor de poupança ideal para o seu perfil financeiro.</p>
                     </div>
-                  ) : (
-                    <button onClick={() => { setTempIncome(income); setIsEditingIncome(true); }} className="text-xs text-emerald-600 hover:text-emerald-700 font-semibold flex items-center gap-1">✏️ Ajustar</button>
-                  )}
+                    <div className="text-right">
+                      {isEditingGoal ? (
+                        <div className="flex items-center gap-1 justify-end">
+                          <span className="text-xs text-slate-500">R$</span>
+                          <input 
+                            type="number"
+                            value={tempGoal}
+                            onChange={(e) => setTempGoal(e.target.value)}
+                            className="w-20 px-2 py-1 border rounded text-xs font-bold text-slate-800 focus:outline-emerald-500"
+                            autoFocus
+                          />
+                          <button onClick={handleSaveGoal} className="bg-emerald-600 text-white p-1 rounded hover:bg-emerald-700">✔️</button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-emerald-700 bg-emerald-50 px-3 py-1 rounded-full text-sm">
+                            Meta: R$ {savingsGoal.toLocaleString('pt-BR')}
+                          </span>
+                          <button 
+                            onClick={() => { setTempGoal(savingsGoal); setIsEditingGoal(true); }}
+                            className="text-xs text-slate-400 hover:text-slate-600 font-bold"
+                            title="Alterar Meta"
+                          >
+                            ✏️
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Barra de Progresso de Meta */}
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-xs font-semibold">
+                      <span>Poupança Atual Projetada: R$ {Math.max(0, remainingBalance).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                      <span>{savingsGoalPercentage}% alcançado</span>
+                    </div>
+                    <div className="w-full bg-slate-100 rounded-full h-3 overflow-hidden">
+                      <div 
+                        className={`h-full rounded-full transition-all duration-500 ${
+                          savingsGoalPercentage >= 100 ? 'bg-gradient-to-r from-emerald-500 to-teal-500' :
+                          savingsGoalPercentage >= 50 ? 'bg-indigo-500' : 'bg-amber-500'
+                        }`}
+                        style={{ width: `${savingsGoalPercentage}%` }}
+                      ></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-4 bg-slate-50 p-4 rounded-xl flex items-center gap-3">
+                  <span className="text-2xl">💡</span>
+                  <p className="text-xs text-slate-600 leading-relaxed">
+                    {remainingBalance >= savingsGoal 
+                      ? "Excelente, Red! Você bateu sua meta de economia. Esse valor excedente já pode ir direto para investimentos!"
+                      : `Faltam R$ ${(savingsGoal - Math.max(0, remainingBalance)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} para atingir a meta mensal desejada.`}
+                  </p>
                 </div>
               </div>
 
-              <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex flex-col justify-between hover:shadow-md transition-shadow">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Gastos Fixos</p>
-                    <h3 className="text-2xl font-black text-slate-800 mt-1">R$ {totalFixed.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</h3>
+              {/* Regra de Saúde 50/30/20 do Mês Selecionado */}
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex flex-col justify-between">
+                <div>
+                  <h3 className="font-bold text-lg text-slate-800 mb-1">⚖️ Análise Orçamentária 50/30/20</h3>
+                  <p className="text-xs text-slate-500 mb-4">Veja como sua renda está distribuída de acordo com a metodologia recomendada:</p>
+                  
+                  <div className="space-y-3">
+                    {/* Essenciais / Fixos */}
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-xs">
+                        <span className="font-semibold text-slate-600">Essenciais (Fixos - Meta: 50%)</span>
+                        <span className="font-bold text-blue-600">{fixedPercentageOfIncome.toFixed(0)}%</span>
+                      </div>
+                      <div className="w-full bg-slate-100 rounded-full h-1.5">
+                        <div className="bg-blue-500 h-1.5 rounded-full" style={{ width: `${Math.min(fixedPercentageOfIncome, 100)}%` }}></div>
+                      </div>
+                    </div>
+
+                    {/* Estilo de Vida */}
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-xs">
+                        <span className="font-semibold text-slate-600">Estilo de Vida (Pontuais - Meta: 30%)</span>
+                        <span className="font-bold text-amber-600">{oneTimePercentageOfIncome.toFixed(0)}%</span>
+                      </div>
+                      <div className="w-full bg-slate-100 rounded-full h-1.5">
+                        <div className="bg-amber-500 h-1.5 rounded-full" style={{ width: `${Math.min(oneTimePercentageOfIncome, 100)}%` }}></div>
+                      </div>
+                    </div>
+
+                    {/* Poupança */}
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-xs">
+                        <span className="font-semibold text-slate-600">Economia / Saldo Restante (Meta: 20%)</span>
+                        <span className={`font-bold ${savingsPercentageOfIncome >= 20 ? 'text-emerald-600' : 'text-slate-500'}`}>{savingsPercentageOfIncome.toFixed(0)}%</span>
+                      </div>
+                      <div className="w-full bg-slate-100 rounded-full h-1.5">
+                        <div className={`h-1.5 rounded-full ${savingsPercentageOfIncome >= 0 ? 'bg-emerald-500' : 'bg-rose-500'}`} style={{ width: `${Math.max(0, Math.min(savingsPercentageOfIncome, 100))}%` }}></div>
+                      </div>
+                    </div>
                   </div>
-                  <div className="p-3 bg-blue-50 text-blue-600 rounded-xl">📌</div>
                 </div>
-                <div className="mt-4 pt-3 border-t border-slate-100 text-xs text-slate-500">
-                  Representa {income > 0 ? ((totalFixed / income) * 100).toFixed(1) : 0}% da renda
+
+                <div className="mt-4 text-center border-t border-slate-100 pt-3">
+                  <span className="text-xs font-bold text-slate-400 block mb-1">Diagnóstico do Período</span>
+                  <span className={`inline-block px-3 py-1 rounded-full text-xs font-bold ${
+                    savingsPercentageOfIncome >= 20 ? 'bg-emerald-100 text-emerald-800' :
+                    savingsPercentageOfIncome >= 0 ? 'bg-yellow-100 text-yellow-800' :
+                    'bg-red-100 text-red-800'
+                  }`}>
+                    {savingsPercentageOfIncome >= 20 ? 'Equilibrado (Ideal)' :
+                     savingsPercentageOfIncome >= 0 ? 'Atenção (Margem Apertada)' :
+                     'Alerta (Orçamento Estourado)'}
+                  </span>
                 </div>
               </div>
 
-              <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex flex-col justify-between hover:shadow-md transition-shadow">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Gastos Pontuais</p>
-                    <h3 className="text-2xl font-black text-slate-800 mt-1">R$ {totalOneTime.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</h3>
-                  </div>
-                  <div className="p-3 bg-amber-50 text-amber-600 rounded-xl">🛍️</div>
-                </div>
-                <div className="mt-4 pt-3 border-t border-slate-100 text-xs text-slate-500">
-                  Representa {income > 0 ? ((totalOneTime / income) * 100).toFixed(1) : 0}% da renda
-                </div>
-              </div>
-
-              <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex flex-col justify-between hover:shadow-md transition-shadow">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Margem Restante</p>
-                    <h3 className={`text-2xl font-black mt-1 ${remainingBalance >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>R$ {remainingBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</h3>
-                  </div>
-                  <div className={`p-3 rounded-xl ${remainingBalance >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>{remainingBalance >= 0 ? '✅' : '🚨'}</div>
-                </div>
-                <div className="mt-4 pt-3 border-t border-slate-100 text-xs font-semibold">
-                  <span className={remainingBalance >= 0 ? 'text-emerald-600' : 'text-rose-600'}>{remainingBalance >= 0 ? 'Dentro do planejado!' : 'Orçamento estourado!'}</span>
-                </div>
-              </div>
             </section>
 
-            {activeMonthExpenses.length === 0 && (
-              <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-6 flex flex-col sm:flex-row justify-between items-center gap-4">
-                <div className="flex items-center gap-4">
-                  <span className="text-4xl">🗓️</span>
+            {/* Gerenciamento de Despesas padrão do dashboard */}
+            <section className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+              
+              {/* Formulário */}
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 h-fit">
+                <h3 className="font-bold text-lg text-slate-800 mb-1">➕ Novo Gasto para {formatMonthName(currentMonth)}</h3>
+                <p className="text-xs text-slate-500 mb-6">A data é configurada automaticamente dentro do mês atual.</p>
+
+                <form onSubmit={handleAddExpense} className="space-y-4">
                   <div>
-                    <h4 className="font-bold text-indigo-900 text-lg">Este mês ainda não tem gastos!</h4>
-                    <p className="text-sm text-indigo-700">Deseja clonar os gastos fixos recorrentes do mês anterior?</p>
+                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Descrição</label>
+                    <input
+                      type="text"
+                      placeholder="Ex: Conta de internet, Aluguel, Farmácia..."
+                      value={newDesc}
+                      onChange={(e) => setNewDesc(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
+                      required
+                    />
                   </div>
-                </div>
-                <button onClick={handleImportPreviousFixed} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm px-5 py-3 rounded-xl transition duration-150 shadow">🔄 Copiar Contas Fixas</button>
-              </div>
-            )}
 
-            {/* ABA 1: DASHBOARD */}
-            {activeTab === 'dashboard' && (
-              <div className="space-y-8">
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                  {/* Meta */}
-                  <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 lg:col-span-2 flex flex-col justify-between">
+                  <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <div className="flex justify-between items-center mb-4">
-                        <div>
-                          <h3 className="font-bold text-lg text-slate-800">🎯 Meta de Economia</h3>
-                          <p className="text-xs text-slate-500">Valor de poupança ideal planejado para o período.</p>
-                        </div>
-                        <div>
-                          {isEditingGoal ? (
-                            <div className="flex items-center gap-1">
-                              <input type="number" value={tempGoal} onChange={(e) => setTempGoal(e.target.value)} className="w-20 px-2 py-1 border rounded text-xs font-bold text-slate-800" autoFocus />
-                              <button onClick={handleSaveGoal} className="bg-emerald-600 text-white p-1 rounded">✔️</button>
-                            </div>
-                          ) : (
-                            <div className="flex items-center gap-2">
-                              <span className="font-bold text-emerald-700 bg-emerald-50 px-3 py-1 rounded-full text-sm">Meta: R$ {savingsGoal.toLocaleString('pt-BR')}</span>
-                              <button onClick={() => { setTempGoal(savingsGoal); setIsEditingGoal(true); }} className="text-xs text-slate-400 hover:text-slate-600 font-bold">✏️</button>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                      <div className="space-y-2">
-                        <div className="flex justify-between text-xs font-semibold">
-                          <span>Poupança Projetada: R$ {Math.max(0, remainingBalance).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
-                          <span>{savingsGoalPercentage}% alcançado</span>
-                        </div>
-                        <div className="w-full bg-slate-100 rounded-full h-3 overflow-hidden">
-                          <div className={`h-full rounded-full transition-all duration-500 ${savingsGoalPercentage >= 100 ? 'bg-gradient-to-r from-emerald-500 to-teal-500' : savingsGoalPercentage >= 50 ? 'bg-indigo-500' : 'bg-amber-500'}`} style={{ width: `${savingsGoalPercentage}%` }}></div>
-                        </div>
-                      </div>
+                      <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Valor (R$)</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        placeholder="0,00"
+                        value={newAmount}
+                        onChange={(e) => setNewAmount(e.target.value)}
+                        className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 font-semibold outline-none"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Data</label>
+                      <input
+                        type="date"
+                        value={newDate}
+                        onChange={(e) => setNewDate(e.target.value)}
+                        min={`${currentMonth}-01`}
+                        max={`${currentMonth}-31`}
+                        className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm text-slate-600 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
+                      />
                     </div>
                   </div>
 
-                  {/* 50/30/20 */}
-                  <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex flex-col justify-between">
-                    <div>
-                      <h3 className="font-bold text-lg text-slate-800 mb-1">⚖️ Distribuição 50/30/20</h3>
-                      <div className="space-y-3 mt-4">
-                        <div className="space-y-1">
-                          <div className="flex justify-between text-xs">
-                            <span>Essenciais (Fixo - 50%)</span>
-                            <span className="font-bold text-blue-600">{fixedPercentageOfIncome.toFixed(0)}%</span>
-                          </div>
-                          <div className="w-full bg-slate-100 rounded-full h-1.5">
-                            <div className="bg-blue-500 h-1.5 rounded-full" style={{ width: `${Math.min(fixedPercentageOfIncome, 100)}%` }}></div>
-                          </div>
-                        </div>
-                        <div className="space-y-1">
-                          <div className="flex justify-between text-xs">
-                            <span>Lazer/Variável (30%)</span>
-                            <span className="font-bold text-amber-600">{oneTimePercentageOfIncome.toFixed(0)}%</span>
-                          </div>
-                          <div className="w-full bg-slate-100 rounded-full h-1.5">
-                            <div className="bg-amber-500 h-1.5 rounded-full" style={{ width: `${Math.min(oneTimePercentageOfIncome, 100)}%` }}></div>
-                          </div>
-                        </div>
-                        <div className="space-y-1">
-                          <div className="flex justify-between text-xs">
-                            <span>Reserva (20%)</span>
-                            <span className="font-bold text-emerald-600">{savingsPercentageOfIncome.toFixed(0)}%</span>
-                          </div>
-                          <div className="w-full bg-slate-100 rounded-full h-1.5">
-                            <div className={`h-1.5 rounded-full ${savingsPercentageOfIncome >= 0 ? 'bg-emerald-500' : 'bg-rose-500'}`} style={{ width: `${Math.max(0, Math.min(savingsPercentageOfIncome, 100))}%` }}></div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                  {/* Form */}
-                  <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 h-fit">
-                    <h3 className="font-bold text-lg text-slate-800 mb-1">➕ Novo Gasto</h3>
-                    <form onSubmit={handleAddExpense} className="space-y-4 mt-4">
-                      <div>
-                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Descrição</label>
-                        <input type="text" placeholder="Ex: Mercado, Aluguel, Luz..." value={newDesc} onChange={(e) => setNewDesc(e.target.value)} className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 outline-none" required />
-                      </div>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Valor</label>
-                          <input type="number" step="0.01" placeholder="0,00" value={newAmount} onChange={(e) => setNewAmount(e.target.value)} className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 font-semibold outline-none" required />
-                        </div>
-                        <div>
-                          <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Data</label>
-                          <input type="date" value={newDate} onChange={(e) => setNewDate(e.target.value)} min={`${currentMonth}-01`} max={`${currentMonth}-31`} className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm text-slate-600 focus:ring-2 focus:ring-emerald-500 outline-none" />
-                        </div>
-                      </div>
-                      <div>
-                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Tipo de Gasto</label>
-                        <div className="grid grid-cols-2 gap-2 mt-1">
-                          <button type="button" onClick={() => setNewType('fixed')} className={`py-2 px-3 text-xs font-bold rounded-xl border transition-all ${newType === 'fixed' ? 'bg-blue-50 border-blue-400 text-blue-700 shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>📌 Fixo</button>
-                          <button type="button" onClick={() => setNewType('one-time')} className={`py-2 px-3 text-xs font-bold rounded-xl border transition-all ${newType === 'one-time' ? 'bg-amber-50 border-amber-400 text-amber-700 shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>🛍️ Pontual</button>
-                        </div>
-                      </div>
-                      <div>
-                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Categoria</label>
-                        <select value={newCategory} onChange={(e) => setNewCategory(e.target.value)} className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 bg-white outline-none">
-                          {DEFAULT_CATEGORIES.map(cat => (<option key={cat.id} value={cat.id}>{cat.icon} {cat.name}</option>))}
-                        </select>
-                      </div>
-                      <button type="submit" className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow transition text-sm">➕ Registrar Despesa</button>
-                    </form>
-                  </div>
-
-                  {/* List */}
-                  <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 lg:col-span-2 flex flex-col justify-between">
-                    <div>
-                      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
-                        <h3 className="font-bold text-lg text-slate-800">📋 Detalhamento ({formatMonthName(currentMonth)})</h3>
-                        <div className="text-sm font-semibold bg-slate-100 text-slate-600 px-3 py-1.5 rounded-lg">Total Gasto: R$ {totalExpenses.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
-                        <input type="text" placeholder="Buscar..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="px-3 py-2 border border-slate-200 rounded-xl text-xs w-full outline-none focus:ring-1 focus:ring-emerald-500" />
-                        <select value={filterType} onChange={(e) => setFilterType(e.target.value)} className="px-3 py-2 border border-slate-200 rounded-xl text-xs bg-white text-slate-600 outline-none"><option value="all">Todos os Tipos</option><option value="fixed">Apenas Fixos</option><option value="one-time">Apenas Pontuais</option></select>
-                        <select value={filterCategory} onChange={(e) => setFilterCategory(e.target.value)} className="px-3 py-2 border border-slate-200 rounded-xl text-xs bg-white text-slate-600 outline-none"><option value="all">Todas Categorias</option>{DEFAULT_CATEGORIES.map(cat => (<option key={cat.id} value={cat.id}>{cat.icon} {cat.name}</option>))}</select>
-                      </div>
-                      <div className="overflow-x-auto max-h-[300px] border border-slate-100 rounded-xl">
-                        <table className="min-w-full divide-y divide-slate-100">
-                          <tbody className="bg-white divide-y divide-slate-100">
-                            {filteredExpenses.length > 0 ? (
-                              filteredExpenses.map((exp) => {
-                                const catInfo = DEFAULT_CATEGORIES.find(c => c.id === exp.category) || DEFAULT_CATEGORIES[DEFAULT_CATEGORIES.length - 1];
-                                return (
-                                  <tr key={exp.id} className="hover:bg-slate-50/80 transition-colors">
-                                    <td className="px-4 py-3">
-                                      <div className="font-semibold text-slate-800 text-sm">{exp.description}</div>
-                                      <div className="flex items-center gap-1.5 mt-1">
-                                        <span className={`text-[10px] px-1.5 py-0.5 rounded border ${catInfo.color}`}>{catInfo.icon} {catInfo.name}</span>
-                                        <span className="text-[10px] text-slate-400">{new Date(exp.date + 'T00:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}</span>
-                                      </div>
-                                    </td>
-                                    <td className="px-4 py-3 text-center">
-                                      <span className={`text-[10px] font-bold px-2 py-1 rounded-full border ${exp.type === 'fixed' ? 'bg-blue-50 text-blue-700 border-blue-100' : 'bg-amber-50 text-amber-700 border-amber-100'}`}>{exp.type === 'fixed' ? '📌 Fixo' : '🛍️ Pontual'}</span>
-                                    </td>
-                                    <td className="px-4 py-3 text-right font-bold text-slate-800 text-sm">R$ {exp.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
-                                    <td className="px-4 py-3 text-center">
-                                      <button onClick={() => handleDeleteExpense(exp.id)} className="text-rose-400 hover:text-rose-600 p-1.5 hover:bg-rose-50 rounded-lg transition">🗑️</button>
-                                    </td>
-                                  </tr>
-                                );
-                              })
-                            ) : (
-                              <tr><td colSpan="4" className="px-4 py-8 text-center text-slate-400 text-sm">Nenhum gasto encontrado.</td></tr>
-                            )}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* ABA 2: PLANILHA GRID */}
-            {activeTab === 'spreadsheet' && (
-              <section className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 space-y-6">
-                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                   <div>
-                    <h3 className="font-bold text-xl text-slate-800 flex items-center gap-2">🟢 Modo Planilha Rápida</h3>
-                    <p className="text-xs text-slate-500">Edite as células diretamente na tabela abaixo.</p>
+                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Tipo de Gasto</label>
+                    <div className="grid grid-cols-2 gap-2 mt-1">
+                      <button
+                        type="button"
+                        onClick={() => setNewType('fixed')}
+                        className={`py-2 px-3 text-xs font-bold rounded-xl border transition-all ${
+                          newType === 'fixed'
+                            ? 'bg-blue-50 border-blue-400 text-blue-700 shadow-sm'
+                            : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                        }`}
+                      >
+                        📌 Fixo (Mensal)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setNewType('one-time')}
+                        className={`py-2 px-3 text-xs font-bold rounded-xl border transition-all ${
+                          newType === 'one-time'
+                            ? 'bg-amber-50 border-amber-400 text-amber-700 shadow-sm'
+                            : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                        }`}
+                      >
+                        🛍️ Pontual (Variável)
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex flex-wrap gap-2">
-                    <button onClick={handleCopyToClipboardForSheets} className="bg-emerald-50 border border-emerald-200 text-emerald-700 px-4 py-2 rounded-xl text-xs font-bold transition">📋 Copiar p/ Google Planilhas (Ctrl+V)</button>
-                    <button onClick={handleExportCSV} className="bg-slate-800 text-white px-4 py-2 rounded-xl text-xs font-bold transition">📥 Baixar Excel (.CSV)</button>
-                  </div>
-                </div>
 
-                <div className="overflow-x-auto border border-slate-200 rounded-xl">
-                  <table className="min-w-full divide-y divide-slate-200 text-sm">
-                    <thead className="bg-slate-50 font-bold text-slate-600">
-                      <tr>
-                        <th className="px-4 py-3 text-left">Descrição</th>
-                        <th className="px-4 py-3 text-center">Categoria</th>
-                        <th className="px-4 py-3 text-center">Tipo</th>
-                        <th className="px-4 py-3 text-center">Data</th>
-                        <th className="px-4 py-3 text-right">Valor (R$)</th>
-                        <th className="px-4 py-3 text-center">Ações</th>
-                      </tr>
-                    </thead>
-                    <tbody className="bg-white divide-y divide-slate-200">
-                      {activeMonthExpenses.length > 0 ? (
-                        activeMonthExpenses.map((exp) => (
-                          <tr key={exp.id} className="hover:bg-slate-50 transition-colors">
-                            <td className="px-3 py-2"><input type="text" value={exp.description} onChange={(e) => handleSpreadsheetCellChange(exp.id, 'description', e.target.value)} className="w-full px-2 py-1 bg-transparent focus:bg-white rounded border-none font-medium text-slate-800 outline-none text-sm" /></td>
-                            <td className="px-3 py-2 text-center">
-                              <select value={exp.category} onChange={(e) => handleSpreadsheetCellChange(exp.id, 'category', e.target.value)} className="bg-transparent text-xs text-slate-600 outline-none cursor-pointer">
-                                {DEFAULT_CATEGORIES.map(cat => (<option key={cat.id} value={cat.id}>{cat.icon} {cat.name}</option>))}
-                              </select>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Categoria</label>
+                    <select
+                      value={newCategory}
+                      onChange={(e) => setNewCategory(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 bg-white cursor-pointer outline-none"
+                    >
+                      {DEFAULT_CATEGORIES.map(cat => (
+                        <option key={cat.id} value={cat.id}>
+                          {cat.icon} {cat.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <button
+                    type="submit"
+                    className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-sm hover:shadow transition duration-200 text-sm flex justify-center items-center gap-2"
+                  >
+                    <span>➕ Registrar Despesa</span>
+                  </button>
+                </form>
+              </div>
+
+              {/* Listagem */}
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 lg:col-span-2 flex flex-col justify-between">
+                <div>
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
+                    <div>
+                      <h3 className="font-bold text-lg text-slate-800">📋 Detalhamento ({formatMonthName(currentMonth)})</h3>
+                      <p className="text-xs text-slate-500">Mostrando apenas transações ocorridas neste mês.</p>
+                    </div>
+                    <div className="text-sm font-semibold bg-slate-100 text-slate-600 px-3 py-1.5 rounded-lg">
+                      Total Gasto: R$ {totalExpenses.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    </div>
+                  </div>
+
+                  {/* Filtros da tabela */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+                    <input
+                      type="text"
+                      placeholder="Buscar despesa..."
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                      className="px-3 py-2 border border-slate-200 rounded-xl text-xs w-full focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    />
+
+                    <select
+                      value={filterType}
+                      onChange={(e) => setFilterType(e.target.value)}
+                      className="px-3 py-2 border border-slate-200 rounded-xl text-xs bg-white text-slate-600 outline-none"
+                    >
+                      <option value="all">Filtro: Todos os Tipos</option>
+                      <option value="fixed">Filtro: Apenas Fixos 📌</option>
+                      <option value="one-time">Filtro: Apenas Pontuais 🛍️</option>
+                    </select>
+
+                    <select
+                      value={filterCategory}
+                      onChange={(e) => setFilterCategory(e.target.value)}
+                      className="px-3 py-2 border border-slate-200 rounded-xl text-xs bg-white text-slate-600 outline-none"
+                    >
+                      <option value="all">Filtro: Todas Categorias</option>
+                      {DEFAULT_CATEGORIES.map(cat => (
+                        <option key={cat.id} value={cat.id}>{cat.icon} {cat.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Tabela de Itens */}
+                  <div className="overflow-x-auto max-h-[300px] overflow-y-auto border border-slate-100 rounded-xl">
+                    <table className="min-w-full divide-y divide-slate-100">
+                      <thead className="bg-slate-50 sticky top-0">
+                        <tr>
+                          <th className="px-4 py-3 text-left text-[10px] font-bold text-slate-400 uppercase tracking-wider">Descrição / Categoria</th>
+                          <th className="px-4 py-3 text-center text-[10px] font-bold text-slate-400 uppercase tracking-wider">Tipo</th>
+                          <th className="px-4 py-3 text-right text-[10px] font-bold text-slate-400 uppercase tracking-wider">Valor</th>
+                          <th className="px-4 py-3 text-center text-[10px] font-bold text-slate-400 uppercase tracking-wider">Ações</th>
+                        </tr>
+                      </thead>
+                      <tbody className="bg-white divide-y divide-slate-100">
+                        {filteredExpenses.length > 0 ? (
+                          filteredExpenses.map((exp) => {
+                            const catInfo = DEFAULT_CATEGORIES.find(c => c.id === exp.category) || DEFAULT_CATEGORIES[DEFAULT_CATEGORIES.length - 1];
+                            return (
+                              <tr key={exp.id} className="hover:bg-slate-50/80 transition-colors">
+                                <td className="px-4 py-3">
+                                  <div className="font-semibold text-slate-800 text-sm">{exp.description}</div>
+                                  <div className="flex items-center gap-1.5 mt-1">
+                                    <span className={`text-[10px] px-1.5 py-0.5 rounded border ${catInfo.color}`}>
+                                      {catInfo.icon} {catInfo.name}
+                                    </span>
+                                    <span className="text-[10px] text-slate-400">
+                                      {new Date(exp.date + 'T00:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}
+                                    </span>
+                                  </div>
+                                </td>
+                                <td className="px-4 py-3 text-center">
+                                  {exp.type === 'fixed' ? (
+                                    <span className="text-[10px] font-bold bg-blue-50 text-blue-700 px-2 py-1 rounded-full border border-blue-100">
+                                      📌 Fixo
+                                    </span>
+                                  ) : (
+                                    <span className="text-[10px] font-bold bg-amber-50 text-amber-700 px-2 py-1 rounded-full border border-amber-100">
+                                      🛍️ Pontual
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="px-4 py-3 text-right font-bold text-slate-800 text-sm">
+                                  R$ {exp.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                </td>
+                                <td className="px-4 py-3 text-center">
+                                  <button
+                                    onClick={() => handleDeleteExpense(exp.id)}
+                                    className="text-rose-400 hover:text-rose-600 p-1.5 hover:bg-rose-50 rounded-lg transition"
+                                    title="Excluir despesa"
+                                  >
+                                    🗑️
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })
+                        ) : (
+                          <tr>
+                            <td colSpan="4" className="px-4 py-8 text-center text-slate-400 text-sm">
+                              Nenhum gasto encontrado para os filtros selecionados.
                             </td>
-                            <td className="px-3 py-2 text-center">
-                              <select value={exp.type} onChange={(e) => handleSpreadsheetCellChange(exp.id, 'type', e.target.value)} className="bg-transparent text-xs text-slate-600 font-semibold outline-none cursor-pointer">
-                                <option value="fixed">📌 Fixo</option>
-                                <option value="one-time">🛍️ Pontual</option>
-                              </select>
-                            </td>
-                            <td className="px-3 py-2 text-center"><input type="date" value={exp.date} onChange={(e) => handleSpreadsheetCellChange(exp.id, 'date', e.target.value)} className="bg-transparent text-xs text-slate-600 outline-none" /></td>
-                            <td className="px-3 py-2 text-right">
-                              <div className="flex items-center justify-end">
-                                <span className="text-xs text-slate-400 mr-1">R$</span>
-                                <input type="number" step="0.01" value={exp.amount} onChange={(e) => handleSpreadsheetCellChange(exp.id, 'amount', e.target.value)} className="w-20 bg-transparent font-bold text-right outline-none text-sm" />
-                              </div>
-                            </td>
-                            <td className="px-3 py-2 text-center"><button onClick={() => handleDeleteExpense(exp.id)} className="text-slate-400 hover:text-rose-600 p-1">🗑️</button></td>
                           </tr>
-                        ))
-                      ) : (
-                        <tr><td colSpan="6" className="px-4 py-12 text-center text-slate-400">Nenhuma despesa para este mês.</td></tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </section>
-            )}
-
-            {/* ABA 3: BACKUP */}
-            {activeTab === 'backup' && (
-              <section className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                <div className="bg-white p-6 rounded-2xl border border-slate-100">
-                  <h3 className="font-bold text-lg text-rose-800">🛡️ Central de Segurança</h3>
-                  <div className="mt-4 space-y-4 text-xs text-slate-600 leading-relaxed">
-                    <p>Por padrão, todos os dados ficam guardados no armazenamento local (<code>localStorage</code>) do seu navegador celular. Se você limpar os dados do Chrome ou formatar o celular, as informações podem sumir.</p>
-                    <p className="bg-emerald-50 text-emerald-800 p-3 rounded-lg border border-emerald-100 font-semibold">Dica: Baixe um arquivo de backup uma vez por mês e salve na sua nuvem preferida (Google Drive, WhatsApp, etc.).</p>
+                        )}
+                      </tbody>
+                    </table>
                   </div>
                 </div>
 
-                <div className="bg-white p-6 rounded-2xl border border-slate-100 flex flex-col justify-between space-y-6">
-                  <div>
-                    <h3 className="font-bold text-lg text-slate-800">💾 Importar/Exportar Banco de Dados</h3>
-                    <p className="text-xs text-slate-500">Mantenha seus dados sob seu total controle.</p>
+                <div className="mt-4 pt-4 border-t border-slate-100 flex flex-col sm:flex-row justify-between items-center gap-3">
+                  <div className="flex flex-wrap gap-1.5">
+                    {categoryTotals.map(cat => {
+                      const share = ((cat.total / totalExpenses) * 100).toFixed(0);
+                      return (
+                        <span key={cat.id} className="text-[11px] bg-slate-50 border border-slate-100 text-slate-600 px-2 py-1 rounded-lg font-medium flex items-center gap-1">
+                          <span>{cat.icon}</span>
+                          <span>{share}%</span>
+                        </span>
+                      );
+                    })}
                   </div>
-                  <div className="space-y-4">
-                    <button onClick={handleExportBackup} className="w-full py-2.5 bg-emerald-600 text-white font-bold rounded-xl text-xs transition">📥 Baixar Backup Completo (.JSON)</button>
-                    <div>
-                      <input type="file" ref={fileInputRef} onChange={handleImportBackup} accept=".json" className="hidden" />
-                      <button onClick={() => fileInputRef.current.click()} className="w-full py-2.5 bg-slate-100 text-slate-700 border border-slate-200 font-bold rounded-xl text-xs transition">📤 Restaurar de um Backup (.JSON)</button>
-                    </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setActiveTab('spreadsheet')}
+                      className="text-xs bg-slate-100 text-slate-700 px-3 py-1.5 rounded-lg hover:bg-slate-200 transition font-bold"
+                    >
+                      🟢 Abrir Planilha Rápida
+                    </button>
                   </div>
                 </div>
-              </section>
-            )}
+              </div>
 
-          </main>
+            </section>
+          </>
+        )}
+
+        {/* --- ABA 2: MODO PLANILHA RÁPIDA (INTERATIVA) --- */}
+        {activeTab === 'spreadsheet' && (
+          <section className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 space-y-6">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+              <div>
+                <h3 className="font-bold text-xl text-slate-800 flex items-center gap-2">
+                  <span>🟢 Modo Planilha Interativa</span>
+                  <span className="text-xs bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded font-bold">Edição Direta</span>
+                </h3>
+                <p className="text-xs text-slate-500 mt-1">Os campos abaixo funcionam como células em uma planilha. Altere os valores diretamente e eles serão salvos de forma instantânea.</p>
+              </div>
+
+              {/* Botões de Integração Planilhas Externas */}
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={handleCopyToClipboardForSheets}
+                  className="bg-emerald-50 border border-emerald-200 text-emerald-700 hover:bg-emerald-100 px-4 py-2.5 rounded-xl text-xs font-bold transition flex items-center gap-2"
+                  title="Copia para colar no Google Sheets ou Excel"
+                >
+                  📋 Copiar para o Google Planilhas (Ctrl+V)
+                </button>
+                <button
+                  onClick={handleExportCSV}
+                  className="bg-slate-800 text-white hover:bg-slate-900 px-4 py-2.5 rounded-xl text-xs font-bold transition flex items-center gap-2"
+                >
+                  📥 Exportar Excel (.CSV)
+                </button>
+              </div>
+            </div>
+
+            {/* Planilha de Entrada de Dados */}
+            <div className="overflow-x-auto border border-slate-200 rounded-xl">
+              <table className="min-w-full divide-y divide-slate-200 text-sm">
+                <thead className="bg-slate-50 font-bold text-slate-600">
+                  <tr>
+                    <th className="px-4 py-3 text-left w-1/4">Descrição</th>
+                    <th className="px-4 py-3 text-center w-1/6">Categoria</th>
+                    <th className="px-4 py-3 text-center w-1/6">Tipo</th>
+                    <th className="px-4 py-3 text-center w-1/6">Data</th>
+                    <th className="px-4 py-3 text-right w-1/6">Valor (R$)</th>
+                    <th className="px-4 py-3 text-center w-20">Deletar</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-slate-200">
+                  {activeMonthExpenses.length > 0 ? (
+                    activeMonthExpenses.map((exp, index) => (
+                      <tr key={exp.id} className="hover:bg-slate-50 transition-colors">
+                        {/* Descrição */}
+                        <td className="px-3 py-2">
+                          <input
+                            type="text"
+                            value={exp.description}
+                            onChange={(e) => handleSpreadsheetCellChange(exp.id, 'description', e.target.value)}
+                            className="w-full px-2 py-1 bg-transparent hover:bg-slate-100 focus:bg-white focus:ring-1 focus:ring-emerald-500 rounded border-none font-medium text-slate-800 outline-none text-sm"
+                          />
+                        </td>
+                        {/* Categoria */}
+                        <td className="px-3 py-2 text-center">
+                          <select
+                            value={exp.category}
+                            onChange={(e) => handleSpreadsheetCellChange(exp.id, 'category', e.target.value)}
+                            className="px-2 py-1 bg-transparent hover:bg-slate-100 focus:bg-white rounded border-none text-xs text-slate-600 outline-none cursor-pointer"
+                          >
+                            {DEFAULT_CATEGORIES.map(cat => (
+                              <option key={cat.id} value={cat.id}>{cat.icon} {cat.name}</option>
+                            ))}
+                          </select>
+                        </td>
+                        {/* Tipo */}
+                        <td className="px-3 py-2 text-center">
+                          <select
+                            value={exp.type}
+                            onChange={(e) => handleSpreadsheetCellChange(exp.id, 'type', e.target.value)}
+                            className="px-2 py-1 bg-transparent hover:bg-slate-100 focus:bg-white rounded border-none text-xs text-slate-600 font-semibold outline-none cursor-pointer"
+                          >
+                            <option value="fixed">📌 Fixo</option>
+                            <option value="one-time">🛍️ Pontual</option>
+                          </select>
+                        </td>
+                        {/* Data */}
+                        <td className="px-3 py-2 text-center">
+                          <input
+                            type="date"
+                            value={exp.date}
+                            onChange={(e) => handleSpreadsheetCellChange(exp.id, 'date', e.target.value)}
+                            className="px-2 py-1 bg-transparent hover:bg-slate-100 focus:bg-white rounded border-none text-xs text-slate-600 outline-none"
+                          />
+                        </td>
+                        {/* Valor */}
+                        <td className="px-3 py-2 text-right">
+                          <div className="flex items-center justify-end">
+                            <span className="text-xs text-slate-400 mr-1">R$</span>
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={exp.amount}
+                              onChange={(e) => handleSpreadsheetCellChange(exp.id, 'amount', e.target.value)}
+                              className="w-20 px-2 py-1 bg-transparent hover:bg-slate-100 focus:bg-white focus:ring-1 focus:ring-emerald-500 rounded border-none font-bold text-right text-slate-800 outline-none text-sm"
+                            />
+                          </div>
+                        </td>
+                        {/* Ação */}
+                        <td className="px-3 py-2 text-center">
+                          <button
+                            onClick={() => handleDeleteExpense(exp.id)}
+                            className="text-slate-400 hover:text-rose-600 p-1 rounded-lg hover:bg-rose-50 transition"
+                            title="Remover linha"
+                          >
+                            🗑️
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan="6" className="px-4 py-12 text-center text-slate-400">
+                        Nenhuma linha de despesa lançada para {formatMonthName(currentMonth)}. Use o botão de copiar contas do mês passado ou volte para a aba do Dashboard para criar novas!
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Totalizador da Planilha */}
+            <div className="bg-slate-50 p-4 rounded-xl flex flex-col sm:flex-row justify-between items-center gap-4 text-sm">
+              <span className="font-semibold text-slate-600">Linhas ativas na planilha: <strong className="text-slate-800">{activeMonthExpenses.length}</strong></span>
+              <div className="flex gap-4 font-bold">
+                <span className="text-blue-700">Total Fixo: R$ {totalFixed.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                <span className="text-amber-700">Total Pontual: R$ {totalOneTime.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                <span className="text-slate-800 border-l border-slate-300 pl-4">Soma Geral: R$ {totalExpenses.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {/* --- ABA 3: CENTRAL DE BACKUP E SEGURANÇA (O SEU SEGURO CONTRA FALHAS) --- */}
+        {activeTab === 'backup' && (
+          <section className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            
+            {/* O que fazer se der problema */}
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex flex-col justify-between">
+              <div>
+                <h3 className="font-bold text-lg text-rose-800 flex items-center gap-2">
+                  <span>🛡️ Prevenção contra Perda de Dados</span>
+                </h3>
+                <p className="text-xs text-slate-500 mt-1">Saber como funciona a sua segurança evita qualquer dor de cabeça no futuro.</p>
+                
+                <div className="mt-4 space-y-4 text-xs text-slate-600 leading-relaxed">
+                  <div className="p-3 bg-rose-50 rounded-lg border border-rose-100">
+                    <p className="font-bold text-rose-900 mb-1">Como os dados são salvos?</p>
+                    <p>Por padrão, todo o seu preenchimento de salários, metas e despesas fica salvo no armazenamento local (`localStorage`) do seu navegador. Isso significa que se você fechar e abrir a aba, suas informações continuam lá.</p>
+                  </div>
+                  <div className="p-3 bg-amber-50 rounded-lg border border-amber-100">
+                    <p className="font-bold text-amber-900 mb-1">O que pode apagar suas informações?</p>
+                    <ul className="list-disc pl-4 space-y-1 mt-1">
+                      <li>Limpar os cookies, histórico ou dados do navegador.</li>
+                      <li>Usar o navegador em modo "Aba Anônima".</li>
+                      <li>Formatar o celular ou computador.</li>
+                    </ul>
+                  </div>
+                  <div className="p-3 bg-emerald-50 rounded-lg border border-emerald-100">
+                    <p className="font-bold text-emerald-900 mb-1">Como evitar perda total?</p>
+                    <p>Crie o hábito de clicar em **"Baixar Backup Completo"** no final de cada mês. Guarde o arquivo `.json` gerado na sua nuvem (Google Drive, iCloud) ou envie para você mesmo por WhatsApp/e-mail. Caso algo deu errado, basta fazer o upload do arquivo para recuperar absolutamente tudo.</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-6 text-center text-[10px] text-slate-400">
+                Seu Painel de Controle usa criptografia padrão de exportação em JSON puro.
+              </div>
+            </div>
+
+            {/* Painel de Ações de Backup */}
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex flex-col justify-between space-y-6">
+              <div>
+                <h3 className="font-bold text-lg text-slate-800">💾 Gerenciamento de Arquivos de Backup</h3>
+                <p className="text-xs text-slate-500">Exporte ou restaure suas finanças em menos de 10 segundos.</p>
+              </div>
+
+              {/* Botões Grandes de Ação */}
+              <div className="space-y-4">
+                {/* Exportar */}
+                <div className="p-4 border border-slate-100 rounded-xl hover:border-slate-200 transition">
+                  <h4 className="font-bold text-sm text-slate-800 mb-1">1. Salvar meu progresso atual</h4>
+                  <p className="text-[11px] text-slate-400 mb-3">Faz o download do seu banco de dados atualizado com todos os meses integrados.</p>
+                  <button
+                    onClick={handleExportBackup}
+                    className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs shadow-sm hover:shadow transition duration-150 flex justify-center items-center gap-2"
+                  >
+                    📥 Baixar Backup Completo (.JSON)
+                  </button>
+                </div>
+
+                {/* Importar */}
+                <div className="p-4 border border-slate-100 rounded-xl hover:border-slate-200 transition">
+                  <h4 className="font-bold text-sm text-slate-800 mb-1">2. Restaurar um backup antigo</h4>
+                  <p className="text-[11px] text-slate-400 mb-3">Carrega o seu arquivo de backup (.json) no navegador para voltar a usar o painel instantaneamente.</p>
+                  
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={handleImportBackup}
+                    accept=".json"
+                    className="hidden"
+                  />
+                  
+                  <button
+                    onClick={() => fileInputRef.current.click()}
+                    className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 font-bold rounded-xl text-xs transition flex justify-center items-center gap-2"
+                  >
+                    📤 Fazer Upload de Backup (.JSON)
+                  </button>
+                </div>
+              </div>
+
+              {/* Status Técnico */}
+              <div className="bg-slate-50 p-4 rounded-xl text-xs space-y-1.5">
+                <div className="flex justify-between">
+                  <span className="text-slate-400 font-medium">Histórico Total Registrado:</span>
+                  <span className="font-bold text-slate-800">{expenses.length} despesas</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400 font-medium">Orçamentos Ativos:</span>
+                  <span className="font-bold text-slate-800">{Object.keys(monthlyBudgets).length} meses configurados</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400 font-medium">Último Mês Focado:</span>
+                  <span className="font-bold text-slate-800">{formatMonthName(currentMonth)}</span>
+                </div>
+              </div>
+
+            </div>
+
+          </section>
+        )}
+
+      </main>
+
+      {/* Footer */}
+      <footer className="bg-slate-800 text-slate-400 py-8 mt-12 border-t border-slate-700">
+        <div className="max-w-7xl mx-auto px-4 text-center space-y-2">
+          <p className="text-sm font-semibold text-slate-300">Organizador Financeiro Multi-mês do Red 🚀</p>
+          <p className="text-xs">Seguro, Privado e Portável: Seus dados permanecem seguros no seu navegador e sob o seu controle.</p>
         </div>
-      );
-    }
-
-    const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(<App />);
-  </script>
-</body>
-</html>
+      </footer>
+    </div>
+  );
+}
