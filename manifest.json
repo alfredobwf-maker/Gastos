@@ -1,0 +1,17 @@
+{
+"short_name": "Finanças Red",
+"name": "Controle Financeiro do Red",
+"icons": [
+{
+"src": "https://cdn-icons-png.flaticon.com/512/2454/2454282.png",
+"type": "image/png",
+"sizes": "512x512",
+"purpose": "any maskable"
+}
+],
+"start_url": "./index.html",
+"background_color": "#0f172a",
+"theme_color": "#059669",
+"display": "standalone",
+"orientation": "portrait"
+}
